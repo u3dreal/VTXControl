@@ -1,5 +1,9 @@
 #include <Arduino.h>
+#if defined(ESP32)
+#include "ESP32HalfDuplex.h"
+#else
 #include <SoftwareSerialWithHalfDuplex.h>
+#endif
 #include "VTX_SmartAudio.h"
 #include "VTX_Tramp.h"
 #ifndef VTXControl_h
@@ -85,7 +89,11 @@ public:
   bool testSMAResponseFromSerial1();
 #endif
 private:
+#if defined(ESP32)
+  ESP32HalfDuplex* port;
+#else
   SoftwareSerialWithHalfDuplex* port;
+#endif
   int vtx_mode = VTXMode::SmartAudio;//default
   VTXErrors errors = VTXErrors::vtxNoErrors;
   long sa_offerNewSpeed(long currentSpeed);//tries to offer other baud rate to work with vtx

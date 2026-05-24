@@ -1,4 +1,5 @@
 # VTXControl
+
 Arduino library providing video transmitter (VTX) control by SmartAudio/Tramp protocol.
 
 This C/C++ code uses modified SoftwareSerialWithHalfDuplex library (part code taken from CustomSoftwareSerial to support different configuration of serial port (especially 8N2)), some code taken from BetaFlight and ArduPilot (SmartAudio and Tramp protocols support) code.
@@ -7,30 +8,127 @@ This code created to use features of Tramp/SmartAudio on VTX (like switching pow
 
 VTXControl works in two modes/protocols - SmartAudio and Tramp, communications with VTX established by software serial port (SoftwareSerialWithHalfDuplex).
 
-This code had been tested on Eachine TX5258 (SmartAudio v2 protocol) and JHEMCU RuiBet Tran3016W (Tramp protocol) VTXes, so that's not an universal solution for your own VTX (just because your VTX can have manufacturer's own Tramp/SmartAudio protocol implementation).
+## Supported Platforms
 
-This code doesn't support PitMode and GetTemperature features, but you can add these features on your own.
+- **AVR (Arduino Uno, Mega, etc.)** — uses `SoftwareSerialWithHalfDuplex` (interrupt-driven, pin-change based)
+- **ESP32** — uses `ESP32HalfDuplex` (polling-based, bit-banged GPIO)
 
-Please review **powers** and **freqs** arrays definitions in VTXControl.cpp to apply/modify values provided by your VTX.
+Platform selection is automatic at compile time via `#if defined(ESP32)` guards.
 
-A simplest creation of VTXControl instance example:
+## ESP32 Support
 
-//for SmartAudio mode
+The library now runs on ESP32 using a new `ESP32HalfDuplex` transport layer:
 
-VTXControl* vtx;
+- **Polling RX** — `available()` busy-waits for up to 150ms for the first byte, then 5ms between subsequent bytes. No ISR, no pin-change interrupt dependency.
+- **Bit-banged TX** — `sendByte()` drives the GPIO directly with `wait_us()` microsecond delays.
+- **Line settling** — `listen()` includes a 1ms settling delay after TX to suppress false start bits from line ringing on half-duplex single-wire connections.
+- **Buffer drain** — `flush()` clears the circular buffer and waits for the line to be idle for 10ms.
 
-vtx = new VTXControl(VTXMode::SmartAudio, 53, 500, false);
+### SmartAudio v2/v2.1 Response Parsing Fix
 
-or
+SMARTAUDIO_RSP_GET_SETTINGS_V2 and V21 handlers now read channel and power with correct byte offsets:
 
-//for Tramp mode
+```
+// Response layout: AA 55 CMD LEN [VER] [CH] [PW] [MODE] [FREQ_H] [FREQ_L] ... [CRC]
+ch_index = buffer[5];    // was incorrectly reading buffer[4]
+pwr_Level = buffer[6];
+```
 
-VTXControl* vtx;
+This fixes silent misconfiguration on SmartAudio v2/v2.1 VTXes where the version byte at buffer[4] was being interpreted as the channel index.
 
-vtx = new VTXControl(VTXMode::Tramp, 53, 500, false);
+## Usage
 
-Sorry there is no support or help with this code, use it on your own.
+### SmartAudio Mode (ESP32 example)
 
-NB: The main problem of interacting VTXControl with different VTXs is in implementation difference of SmartAudio/Tramp protocols. In other words, as BetaFlight/ArduPilot authors said, "because of poor implementation" of SmartAudio/Tramp by VTX manufacturers. So please use VTX_Test project to diagnose your own VTX - send commands, analyze responses, try different baudrates, try to add zero or not bytes to the end/start of standard frames/packets, ignore or not crc to achieve correct results with your own VTX.
+```cpp
+#include <VTXControl.h>
 
-**NB1: To VTX owners with >800mW power, SmartAudio v1 or v2.1 protocol: you can use following lifehack to create/modify table of powers (coded powers, dBm's): just set different levels of power on your VTX by button and catch updateParameters command response from VTX by VTX_Test project to get coded power level or dBm value for the current level of power.**
+const uint16_t powers[] = {25, 200, 400, 800};
+const uint16_t freqs[] = {
+  5865, 5845, 5825, 5805, 5785, 5765, 5745, 5725,  // Band A
+  5733, 5752, 5771, 5790, 5809, 5828, 5847, 5866,   // Band B
+  5705, 5685, 5665, 5645, 5885, 5905, 5925, 5945,   // Band E
+  5740, 5760, 5780, 5800, 5820, 5840, 5860, 5880,   // Fatshark
+  5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917,   // Race
+};
+
+VTXControl vtx(SmartAudio, 17, powers, 4, freqs, 40);
+
+void setup() {
+  Serial.begin(115200);
+  bool ok = vtx.updateParameters();
+  Serial.printf("VTX detected: %s, ch=%d, pwr=%d\n",
+    ok ? "yes" : "no", vtx.getChannelIndex(), vtx.getPowerLevel());
+}
+
+void loop() {
+  vtx.setChannel(0);      // 5865 MHz
+  vtx.setPower(1);        // 200 mW (index 1)
+  delay(1000);
+  vtx.setChannel(39);     // 5917 MHz
+  delay(1000);
+}
+```
+
+### Tramp Mode (AVR example)
+
+```cpp
+VTXControl vtx(Tramp, 53, powers, 4, freqs, 40);
+
+void setup() {
+  Serial.begin(115200);
+  vtx.updateParameters();
+}
+```
+
+## Constructor
+
+```cpp
+VTXControl(
+  int vtxMode,          // SmartAudio or Tramp
+  int softPin,          // GPIO pin for half-duplex communication
+  const uint16_t powers[],     // power levels in mW
+  int powers_len,               // number of power levels
+  const uint16_t freqs[],       // frequency table in MHz
+  int freqs_len,                // number of frequencies
+  int responseTimeOut = 1000,   // response timeout (ms)
+  bool smartBaudRate = true,    // auto-detect baud rate
+  int numtries = 3              // retries per command
+);
+```
+
+## API
+
+| Method | Description |
+|--------|-------------|
+| `updateParameters()` | Detect VTX and read current settings |
+| `setChannel(int idx)` | Set frequency by channel table index |
+| `setFrequency(uint16_t freq)` | Set frequency by value (MHz) |
+| `setPower(int idx)` | Set power by power table index |
+| `setPowerInmW(uint16_t mW)` | Set power by value (mW) |
+| `setNextChannel()` / `setPrevChannel()` | Increment/decrement channel |
+| `getChannelIndex()` | Current channel index |
+| `getPowerLevel()` | Current power level index |
+
+## Notes
+
+- SmartAudio uses **4800 baud** (or auto-detected, typically 4980 baud), **8N2** (8 data bits, no parity, 2 stop bits)
+- Tramp uses **9600 baud**, **8N1**
+- The library does not support PitMode or GetTemperature
+- CRC verification can be disabled via `SMARTAUDIO_IGNORE_CRC` in `VTX_SmartAudio.h`
+- Eachine TX5258 and similar clones may need `SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END` set to true
+- Use `VTX_Test` sketch to diagnose unknown VTX models
+
+## VTX_Test
+
+The `VTX_Test/` folder contains a diagnostic sketch that can:
+- Send arbitrary SmartAudio commands
+- Analyze VTX responses
+- Try different baud rates
+- Dump raw response bytes
+
+Use this to characterize a new VTX before integrating.
+
+## License
+
+LGPL 2.1 — see LICENSE file.

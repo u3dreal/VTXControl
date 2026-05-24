@@ -1,3 +1,5 @@
+#if !defined(ESP32)
+
 /*
 SoftwareSerialWithHalfDuplex.cpp (formerly SoftwareSerial.cpp) -
 Multi-instance software serial with half duplex library for Arduino/Wiring
@@ -949,3 +951,4 @@ uint8_t SoftwareSerialWithHalfDuplex::calculateNumberOfBits1(uint8_t sentData)
 	return numberOfBit1;
 }
 	//end - taken from CustomSoftwareSerial
+#endif // !defined(ESP32)

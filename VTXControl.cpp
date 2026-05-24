@@ -1,9 +1,15 @@
 #include <Arduino.h>
+#if !defined(ESP32)
 #include <util/delay.h>
+#endif
 #include "VTXControl.h"
 #include "VTX_SmartAudio.h"
 #include "VTX_Tramp.h"
+#if defined(ESP32)
+#include "ESP32HalfDuplex.h"
+#else
 #include "SoftwareSerialWithHalfDuplex.h"
+#endif
 
 // these parameters for JHEMCU RuiBet Tran3016W
 // uint16_t powers[5] = { 25, 200, 400, 800, 1600 };//in mW
@@ -19,13 +25,17 @@ VTXControl::VTXControl(
     int powers_len,
     const uint16_t freqs[],
     int freqs_len,
-    int responseTimeOut = 1000,
-    bool smartBaudRate = true,
-    int numtries = 3)
+    int responseTimeOut,
+    bool smartBaudRate,
+    int numtries)
 {
   DEBUG("VTXControl: Create");
   vtx_mode = vtxMode;
+#if defined(ESP32)
+  port = new ESP32HalfDuplex(softPin, softPin, false, false);
+#else
   port = new SoftwareSerialWithHalfDuplex(softPin, softPin, false, false);
+#endif
   _responseTimeOut = responseTimeOut;
   _numtries = numtries;
   _smartBaudRate = smartBaudRate;
@@ -54,11 +64,11 @@ void VTXControl::clearErrors()
 }
 long VTXControl::getSpeed()
 {
-  // DEBUG("VTXControl: getSpeed:" + (String)port->getSpeed());
-  port->getSpeed();
+  return port->getSpeed();
 }
 VTXErrors VTXControl::getErrors()
 {
+#if !defined(ESP32)
   sswhdErrors err = port->getErrors();
   if (err != sswhdErrors::sswhdNoErrors)
   {
@@ -71,6 +81,7 @@ VTXErrors VTXControl::getErrors()
     if ((err & sswhdErrors::sswhdRXDelayStopBitNotSet) != 0)
       errors = static_cast<VTXErrors>(static_cast<long>(errors) | static_cast<long>(vtxportRXDelayStopBitNotSet));
   }
+#endif
   return errors;
 }
 void VTXControl::setError(VTXErrors error)
@@ -273,7 +284,11 @@ bool VTXControl::sa_readResponse()
 {
   // On my Unify Pro32 the SmartAudio response is sent exactly 100ms after the request
   // and the initial response is 40ms long so we should wait at least 140ms before giving up
+#if defined(ESP32)
+  // ESP32HalfDuplex::available() polls for up to 500ms; no blocking wait needed
+#else
   waitForInMs(_responseTimeOut);
+#endif
 
   int16_t incoming_bytes_count = port->available();
   // check if it is a response in the wire
@@ -440,10 +455,10 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
   {
     DEBUG("sa_parse_response_buffer(), Protocol version 2");
     sa_protocol_version = SMARTAUDIO_SPEC_PROTOCOL_v2;
-    const SettingsResponseFrame *respv2 = (const SettingsResponseFrame *)buffer;
-    pwr_Level = respv2->power;
-    ch_index = respv2->channel;
-    pitMode = (respv2->operationMode & 0x04) != 0;
+    // Response: AA 55 09 05 [VER] [CH] [PW] [MODE] [FREQ_H] [FREQ_L] [CRC]
+    ch_index = buffer[5];
+    pwr_Level = buffer[6];
+    pitMode = (buffer[7] & 0x04) != 0;
   }
   break;
 
@@ -451,10 +466,10 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
   {
     DEBUG("sa_parse_response_buffer(), Protocol version 2.1");
     sa_protocol_version = SMARTAUDIO_SPEC_PROTOCOL_v21;
-    const SettingsExtendedResponseFrame *respv21 = (const SettingsExtendedResponseFrame *)buffer;
-    pwr_Level = getPowerIndexFromDbm(respv21->power_dbm);
-    ch_index = respv21->settings.channel;
-    pitMode = (respv21->settings.operationMode & 0x04) != 0;
+    // Response: AA 55 11 xx [VER] [CH] [PW] [MODE] [FREQ_H] [FREQ_L] [PWR_DBM] [NUM_LVLS] [LVL0-7] [CRC]
+    ch_index = buffer[5];
+    pwr_Level = getPowerIndexFromDbm(buffer[10]);
+    pitMode = (buffer[7] & 0x04) != 0;
   }
   break;
   case SMARTAUDIO_RSP_SET_POWER:
@@ -958,8 +973,13 @@ bool VTXControl::trampReadResponse()
       // DEBUG("trampReadResponse, time out of waiting response");
       break; // return false;
     }
+#if defined(ESP32)
+    delay(10);
+    currentTime += 10;
+#else
     waitForInMs(100);
     currentTime += 100;
+#endif
   }
 
   // DEBUG("trampReadResponse, before fill rx buf");

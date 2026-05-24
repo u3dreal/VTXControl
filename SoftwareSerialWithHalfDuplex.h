@@ -50,6 +50,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #ifndef SoftwareSerialWithHalfDuplex_h
 #define SoftwareSerialWithHalfDuplex_h
 
+#if !defined(ESP32)
+
 #include <inttypes.h>
 #include <Stream.h>
 
@@ -231,4 +233,5 @@ private:
 #undef abs
 #undef round
 #endif
+#endif // !defined(ESP32)
 #endif
