@@ -127,6 +127,7 @@ private:
   //bool sa_setPitMode(int enabled);
   bool sa_getSettings();
   bool sa_setChannel(uint8_t channel);
+  bool sa_setFrequency(uint16_t freq);
   bool sa_setPower(int pwrLevel);      
   bool trampSendPacket(uint8_t* packet, bool respRequired);//trampFrame_t* packet);
   bool trampPush(const uint8_t* packet);//const trampFrame_t* object);

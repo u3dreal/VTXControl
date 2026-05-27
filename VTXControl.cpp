@@ -147,6 +147,7 @@ long VTXControl::sa_offerNewSpeed(long currentSpeed)
     return AP_SMARTAUDIO_SMARTBAUD_MAX;
   if (currentSpeed < AP_SMARTAUDIO_SMARTBAUD_MIN)
     return AP_SMARTAUDIO_SMARTBAUD_MIN;
+  return currentSpeed;
 }
 #if VTXCDEBUG
 bool VTXControl::testSMAWrite()
@@ -241,6 +242,21 @@ bool VTXControl::sa_setChannel(uint8_t channel)
 
   return res;
 }
+bool VTXControl::sa_setFrequency(uint16_t freq)
+{
+  static uint8_t buf[7] = {0xAA, 0x55, SMARTAUDIO_CMD_SET_FREQUENCY, 2, 0, 0, 0};
+  buf[4] = (freq >> 8) & 0xFF;
+  buf[5] = freq & 0xFF;
+  buf[6] = sa_CRC8(buf, 6);
+  port->writeDummyByte();
+  bool res = port->write((uint8_t *)&buf, sizeof(buf)) == sizeof(buf);
+#if SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END
+  port->write((uint8_t)0x00);
+#endif
+  port->listen();
+  return res;
+}
+
 bool VTXControl::sa_getSettings()
 {
   // taken from betaflight vtx_smartaudio.c
@@ -503,6 +519,14 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
     // debug("Channel was set to %d", resp->payload);
   }
   break;
+  case SMARTAUDIO_RSP_SET_FREQUENCY:
+  {
+    DEBUG("sa_parse_response_buffer(), SetFrequency");
+    const U16ResponseFrame *respu16 = (const U16ResponseFrame *)buffer;
+    uint16_t freq = respu16->payload & SMARTAUDIO_FREQUENCY_MASK;
+    ch_index = getChannelIndex(freq);
+  }
+  break;
   }
   return true;
 }
@@ -688,12 +712,17 @@ bool VTXControl::setFrequency(uint16_t freq)
     {
     case VTXMode::SmartAudio:
     {
-      // debug("Setting channel to %d", channel);
-      // if (push_uint8_command_frame(SMARTAUDIO_CMD_SET_CHANNEL, chIndex))
       int chIndex = getChannelIndex(freq);
-      if (chIndex != -1) // if frequency found in the table of freqs
+      if (chIndex != -1)
       {
         if (sa_setChannel(chIndex))
+        {
+          res = sa_readResponse();
+        }
+      }
+      else
+      {
+        if (sa_setFrequency(freq))
         {
           res = sa_readResponse();
         }
@@ -712,11 +741,13 @@ bool VTXControl::setFrequency(uint16_t freq)
     }
     break;
     }
-    // if channel set succesfully - check the updated info from VTX
     if (res)
     {
       uint16_t curr_freq = getChannelFrequency(ch_index);
       if (curr_freq == freq)
+        return true;
+      // frequency was set directly (non-table freq via sa_setFrequency)
+      if (curr_freq == 0 && ch_index < 0)
         return true;
     }
   }
@@ -878,6 +909,7 @@ long VTXControl::trampOfferNewSpeed(long currentSpeed)
     return AP_TRAMP_UART_BAUD_MAX;
   if (currentSpeed < AP_TRAMP_UART_BAUD_MIN)
     return AP_TRAMP_UART_BAUD_MIN;
+  return currentSpeed;
 }
 bool VTXControl::trampSendCmd(uint8_t cmd)
 {
