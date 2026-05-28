@@ -176,18 +176,19 @@ bool VTXControl::testSMAResponseFromSerial1()
   return res;
 }
 #endif
-// bool VTXControl::sa_setPitMode(int enabled)
-//{
-//   //activate - IN RANGE PIT FLAG
-//   //deactivate - (Quit PIT MODE
-//   uint8_t mode = enabled ? 0x01 : 0x04;
-//   if (push_uint8_command_frame(SMARTAUDIO_CMD_SET_MODE, mode))
-//   {
-//     //DEBUG("End sma_setPitMode");
-//     return readResponse(); //updateParameters();
-//   }
-//   return false;
-// }
+bool VTXControl::sa_setPitMode(bool enabled)
+{
+  static uint8_t buf[6] = {0xAA, 0x55, SMARTAUDIO_CMD_SET_MODE, 1, 0x00, 0x00};
+  buf[4] = enabled ? 0x01 : 0x00;
+  buf[5] = sa_CRC8(buf, 5);
+  port->writeDummyByte();
+  bool res = port->write((uint8_t *)&buf, sizeof(buf)) == sizeof(buf);
+#if SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END
+  port->write((uint8_t)0x00);
+#endif
+  port->listen();
+  return res;
+}
 bool VTXControl::sa_setPower(int pwrLevel)
 {
   static uint8_t buf[6] = {0xAA, 0x55, SMARTAUDIO_CMD_SET_POWER, 1, 0x00, 0x00};
@@ -527,24 +528,43 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
     ch_index = getChannelIndex(freq);
   }
   break;
+  case SMARTAUDIO_RSP_SET_MODE:
+  {
+    DEBUG("sa_parse_response_buffer(), SetMode");
+    const U8ResponseFrame *respu8 = (const U8ResponseFrame *)buffer;
+    pitMode = (respu8->payload & 0x04) != 0;
+  }
+  break;
   }
   return true;
 }
 
-// bool VTXControl::setPitMode(bool enabled)
-//{
-//   clearErrors();
-//   switch (vtx_mode)
-//   {
-//   case VTXMode::SmartAudio:
-//     //DEBUG("setPitMode: SMA");
-//     return sa_setPitMode(enabled);
-//   case VTXMode::Tramp:
-//     //DEBUG("setPitMode: Tramp");
-//     return trampSetPitMode(enabled);
-//   }
-//   return false;
-// }
+bool VTXControl::setPitMode(bool enabled)
+{
+  clearErrors();
+  for (int i = 0; i < _numtries; i++)
+  {
+    bool res = false;
+    switch (vtx_mode)
+    {
+    case VTXMode::SmartAudio:
+      if (sa_setPitMode(enabled))
+      {
+        res = sa_readResponse();
+      }
+      break;
+    case VTXMode::Tramp:
+      // trampSetPitMode not implemented
+      break;
+    }
+    if (res)
+    {
+      pitMode = enabled;
+      return true;
+    }
+  }
+  return false;
+}
 
 bool VTXControl::setPowerInmW(uint16_t pwrmW)
 {

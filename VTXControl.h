@@ -69,7 +69,7 @@ public:
     int numtries = 3);
   void flush();
   void waitForInMs(unsigned int ms);
-  //bool setPitMode(bool enabled);
+  bool setPitMode(bool enabled);
   bool setChannel(int freqIndex);//sets frequency by channel index
   bool setFrequency(uint16_t freq);//set frequency by freq value
   bool setPower(int pwrLevel);//sets power by power index in table of powers
@@ -124,7 +124,7 @@ private:
   bool sa_ignoreCrc() const { return SMARTAUDIO_IGNORE_CRC; }  
   bool sa_parseResponseBuffer(const uint8_t* buffer);
   // command functions
-  //bool sa_setPitMode(int enabled);
+  bool sa_setPitMode(bool enabled);
   bool sa_getSettings();
   bool sa_setChannel(uint8_t channel);
   bool sa_setFrequency(uint16_t freq);
