@@ -121,7 +121,7 @@ VTXControl(
 - PitMode is supported for SmartAudio only (not Tramp)
 - Temperature query (`GetSensor`) for Tramp is parsed but not exposed
 - CRC verification can be disabled via `SMARTAUDIO_IGNORE_CRC` in `VTX_SmartAudio.h`
-- Eachine TX5258 and similar clones may need `SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END` set to `true`
+- Eachine TX5258, TX805S and similar clones need trailing `0x00` on writes and may send leading `0x00` in responses — both disabled by default; enable via `vtx.setSaWriteTrailingZero(true)` / `vtx.setSaSkipStartDummyBytes(true)`
 - Use the `VTX_Test` sketch to diagnose unknown VTX models
 
 ## VTX_Test

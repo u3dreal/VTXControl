@@ -80,11 +80,13 @@ void ESP32HalfDuplex::sendByte(uint8_t b) {
   gpio_set_direction((gpio_num_t)_txPin, GPIO_MODE_OUTPUT);
   // Start bit (LOW)
   gpio_set_level((gpio_num_t)_txPin, 0);
-  wait_us(_bitTime);
+  unsigned long deadline = micros() + _bitTime;
+  while (micros() < deadline);
   // Data bits LSB first
   for (uint8_t i = 0; i < _dataBits; i++) {
     gpio_set_level((gpio_num_t)_txPin, (b >> i) & 1);
-    wait_us(_bitTime);
+    deadline += _bitTime;
+    while (micros() < deadline);
   }
   // Parity (if enabled) — not used by SmartAudio/Tramp but handled
   if (_parity) {
@@ -92,12 +94,14 @@ void ESP32HalfDuplex::sendByte(uint8_t b) {
     for (uint8_t i = 0; i < _dataBits; i++) { p ^= (t & 1); t >>= 1; }
     if (_parity == 1) p = !p; // even parity: p is odd, flip
     gpio_set_level((gpio_num_t)_txPin, p);
-    wait_us(_bitTime);
+    deadline += _bitTime;
+    while (micros() < deadline);
   }
   // Stop bits (HIGH)
   for (uint8_t i = 0; i < _stopBits; i++) {
     gpio_set_level((gpio_num_t)_txPin, 1);
-    wait_us(_bitTime);
+    deadline += _bitTime;
+    while (micros() < deadline);
   }
   // Back to input (half-duplex)
   gpio_set_direction((gpio_num_t)_txPin, GPIO_MODE_INPUT);
@@ -123,19 +127,25 @@ bool ESP32HalfDuplex::tryReceiveByte() {
   uint8_t data = 0;
 
   // Wait 1.5 bit times to center on first data bit
-  wait_us(_bitTime + (_bitTime >> 1));
+  unsigned long deadline = micros() + _bitTime + (_bitTime >> 1);
+  while (micros() < deadline);
 
   // Sample data bits LSB first
   for (uint8_t i = 0; i < _dataBits; i++) {
     data |= ((uint8_t)gpio_get_level((gpio_num_t)_txPin) << i);
-    wait_us(_bitTime);
+    deadline += _bitTime;
+    while (micros() < deadline);
   }
 
   // Parity (if present) — consume but ignore for now
-  if (_parity) wait_us(_bitTime);
+  if (_parity) {
+    deadline += _bitTime;
+    while (micros() < deadline);
+  }
 
   // Stop bit(s) — consume
-  wait_us(_bitTime * _stopBits);
+  deadline += _bitTime * _stopBits;
+  while (micros() < deadline);
 
   // Store in circular buffer
   uint8_t next = (uint8_t)(_rxHead + 1) & (ESP32HD_RX_BUF_SIZE - 1);
