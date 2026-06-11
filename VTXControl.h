@@ -78,10 +78,6 @@ public:
   bool setPrevChannel();
   bool updateParameters();  
   int getPowerLevel() { return pwr_Level; }
-  void setSaWriteTrailingZero(bool enable) { _sa_writeTrailingZero = enable; }
-  bool getSaWriteTrailingZero() { return _sa_writeTrailingZero; }
-  void setSaSkipStartDummyBytes(bool enable) { _sa_skipStartDummyBytes = enable; }
-  bool getSaSkipStartDummyBytes() { return _sa_skipStartDummyBytes; }
   int getChannelIndex() { return ch_index; }
   bool getPitMode() { return pitMode; }
   bool sa_readResponse();
@@ -110,8 +106,6 @@ private:
   int _responseTimeOut = 1000;//in ms
   int _numtries = 3;//num tries to send request and receive response, after that we try to change baud rate and try again
   bool _smartBaudRate = true;//tries to find apporpriated baud rate to communicate with VTX, if false- just work on fixed initial baudrate
-  bool _sa_writeTrailingZero = SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END;
-  bool _sa_skipStartDummyBytes = SMARTAUDIO_SKIP_STARTDUMMYBYTES_IN_RESPONSE;
   
   const uint16_t* _powers;//table of powers in mW
   int _power_size;

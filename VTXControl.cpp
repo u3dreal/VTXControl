@@ -183,8 +183,9 @@ bool VTXControl::sa_setPitMode(bool enabled)
   buf[5] = sa_CRC8(buf, 5);
   port->writeDummyByte();
   bool res = port->write((uint8_t *)&buf, sizeof(buf)) == sizeof(buf);
-  if (_sa_writeTrailingZero)
-    port->write((uint8_t)0x00);
+#if SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END
+  port->write((uint8_t)0x00);
+#endif
   port->listen();
   return res;
 }
@@ -216,8 +217,9 @@ bool VTXControl::sa_setPower(int pwrLevel)
   // sending a 0x00 dummy byte in front of the actual frame.
   port->writeDummyByte();
   bool res = port->write((uint8_t *)&buf, sizeof(buf)) == sizeof(buf);
-  if (_sa_writeTrailingZero)
-    port->write((uint8_t)0x00);
+#if SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END
+  port->write((uint8_t)0x00);
+#endif
   port->listen();
 
   return res;
@@ -234,8 +236,9 @@ bool VTXControl::sa_setChannel(uint8_t channel)
   // sending a 0x00 dummy byte in front of the actual frame.
   port->writeDummyByte();
   bool res = port->write((uint8_t *)&buf, sizeof(buf)) == sizeof(buf);
-  if (_sa_writeTrailingZero)
-    port->write((uint8_t)0x00);
+#if SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END
+  port->write((uint8_t)0x00);
+#endif
   port->listen();
 
   return res;
@@ -248,8 +251,9 @@ bool VTXControl::sa_setFrequency(uint16_t freq)
   buf[6] = sa_CRC8(buf, 6);
   port->writeDummyByte();
   bool res = port->write((uint8_t *)&buf, sizeof(buf)) == sizeof(buf);
-  if (_sa_writeTrailingZero)
-    port->write((uint8_t)0x00);
+#if SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END
+  port->write((uint8_t)0x00);
+#endif
   port->listen();
   return res;
 }
@@ -267,8 +271,9 @@ bool VTXControl::sa_getSettings()
   // port->write((uint8_t)0x00);
   bool res = port->write((uint8_t *)&buf, sizeof(buf)) == sizeof(buf);
   // port->writeDummyByte();
-  if (_sa_writeTrailingZero)
-    port->write((uint8_t)0x00);
+#if SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END
+  port->write((uint8_t)0x00);
+#endif
   port->listen();
   return res;
 }
@@ -319,24 +324,20 @@ bool VTXControl::sa_readResponse()
 #if VTXCDEBUG
   port->dumpReceiveBuffer();
 #endif
-  uint8_t b;
-  if (_sa_skipStartDummyBytes)
+  // special feature to correctly read Eachine TX5258 response, it generates first 0x00, 0x00 byte before sync_byte in response
+  // so we skip zero bytes at start of packet
+  uint8_t b = port->peek();
+  int skippedbytes = 0;
+  while (b == 0x00)
   {
-    // special feature to correctly read Eachine TX5258 response, it generates first 0x00, 0x00 byte before sync_byte in response
-    // so we skip zero bytes at start of packet
+    port->read(); // skip 0x00 byte
+    skippedbytes++;
     b = port->peek();
-    int skippedbytes = 0;
-    while (b == 0x00)
-    {
-      port->read(); // skip 0x00 byte
-      skippedbytes++;
-      b = port->peek();
-    }
-    if (skippedbytes > 0)
-    {
-      incoming_bytes_count = port->available(); // refresh incoming_bytes_count
-      DEBUG("sa readResponse, skipped zero bytes =" + (String)skippedbytes);
-    }
+  }
+  if (skippedbytes > 0)
+  {
+    incoming_bytes_count = port->available(); // refresh incoming_bytes_count
+    DEBUG("sa readResponse, skipped zero bytes =" + (String)skippedbytes);
   }
   const uint8_t response_header_size = sizeof(FrameHeader);
   // wait until we have enough bytes to read a header
@@ -406,15 +407,15 @@ bool VTXControl::sa_readResponse()
     response_buffer[buffer_length++] = b;
   }
 
-  // didn't get the whole packet
-  if (buffer_length < packet_size + response_header_size)
-  {
-    DEBUG("readResponse, buffer_length < packet_size + response_header_size, return false");
-    setError(VTXErrors::vtxBufferLengthLessWholePacket);
-    return false;
-  }
+    // didn't get the whole packet
+    if (buffer_length < packet_size + response_header_size)
+    {
+        DEBUG("readResponse, buffer_length < packet_size + response_header_size, return false");
+        setError(VTXErrors::vtxBufferLengthLessWholePacket);
+        return false;
+    }
 
-  bool correct_parse = sa_parseResponseBuffer(response_buffer);
+    bool correct_parse = sa_parseResponseBuffer(response_buffer);
   port->flush(); // clear the read buffer
   // successful response, wait another 100ms to give the VTX a chance to recover
   // before sending another command.
@@ -497,15 +498,15 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
     {
     case ProtocolVersion::SMARTAUDIO_SPEC_PROTOCOL_v21:
       DEBUG("sa_parse_response_buffer(), SetPower:Protocol version 2.1");
-      pwr_Level = getPowerIndexFromDbm(power & 0x3F);
+      pwr_Level = getPowerIndexFromDbm(power);
       break;
     case ProtocolVersion::SMARTAUDIO_SPEC_PROTOCOL_v1:
       DEBUG("sa_parse_response_buffer(), SetPower:Protocol version 1");
-      pwr_Level = getPowerIndexFromV1(power & 0x3F);
+      pwr_Level = getPowerIndexFromV1(power);
       break;
     default:
       DEBUG("sa_parse_response_buffer(), SetPower:Protocol version 2");
-      pwr_Level = power & 0x3F;
+      pwr_Level = power & 0x0F;
       break;
     }
   }
