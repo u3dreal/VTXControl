@@ -23,7 +23,8 @@ ESP32HalfDuplex::ESP32HalfDuplex(uint8_t receivePin, uint8_t transmitPin,
   _dataBits = 8;
   _stopBits = 2;
   _parity = 0;
-  _rxHead = _rxTail = 0;
+  _rxTail = 0;
+  _rxHead = 0;
   _overflow = false;
   _listening = false;
   _receiving = false;
@@ -195,7 +196,8 @@ int ESP32HalfDuplex::peek() {
 }
 
 void ESP32HalfDuplex::flush() {
-  _rxHead = _rxTail = 0;
+  _rxTail = 0;
+  _rxHead = 0;
   _overflow = false;
   // Drain pending bytes by waiting for idle line
   unsigned long t = millis();
