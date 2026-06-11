@@ -319,11 +319,12 @@ bool VTXControl::sa_readResponse()
 #if VTXCDEBUG
   port->dumpReceiveBuffer();
 #endif
+  uint8_t b;
   if (_sa_skipStartDummyBytes)
   {
     // special feature to correctly read Eachine TX5258 response, it generates first 0x00, 0x00 byte before sync_byte in response
     // so we skip zero bytes at start of packet
-    uint8_t b = port->peek();
+    b = port->peek();
     int skippedbytes = 0;
     while (b == 0x00)
     {
