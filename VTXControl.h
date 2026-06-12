@@ -9,8 +9,8 @@
 #ifndef VTXControl_h
 #define VTXControl_h
 //--------------------------
-// #define VTXCDEBUG 1 //Uncomment this define to see the diagnostics
-// #define ESP32HD_DEBUG 1
+#define VTXCDEBUG 1 //Uncomment this define to see the diagnostics
+#define ESP32HD_DEBUG 1
 //--------------------------
 #if VTXCDEBUG
 #define DEBUG(x) Serial.println(x)

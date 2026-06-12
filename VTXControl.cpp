@@ -1184,7 +1184,8 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
       p.listen();
 
       avail = p.available();
-      if (avail < 4) continue;
+      Serial.printf("PROBE: baud=%ld tz=%d avail=%d\n", bauds[bi], tz, avail);
+      if (avail < 4) { Serial.println("PROBE: avail<4, skip"); continue; }
 
       // detect leading zeros
       int leadZeros = 0;
@@ -1195,13 +1196,14 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
       }
 
       uint8_t sync = p.read();
-      if (sync != SMARTAUDIO_SYNC_BYTE) continue;
+      if (sync != SMARTAUDIO_SYNC_BYTE) { Serial.printf("PROBE: sync=0x%02X != 0xAA\n", sync); continue; }
       uint8_t hdr = p.read();
-      if (hdr != SMARTAUDIO_HEADER_BYTE) continue;
+      if (hdr != SMARTAUDIO_HEADER_BYTE) { Serial.printf("PROBE: hdr=0x%02X != 0x55\n", hdr); continue; }
 
       uint8_t cmd = p.read();
       uint8_t len = p.read();
-      if (len >= AP_SMARTAUDIO_MAX_PACKET_SIZE) continue;
+      if (len >= AP_SMARTAUDIO_MAX_PACKET_SIZE) { Serial.printf("PROBE: len=%d too big\n", len); continue; }
+      Serial.printf("PROBE: sync=0x%02X hdr=0x%02X cmd=0x%02X len=%d\n", sync, hdr, cmd, len);
 
       // read payload + CRC
       uint8_t payload[AP_SMARTAUDIO_MAX_PACKET_SIZE];
@@ -1218,7 +1220,9 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
         ver = 2; strcpy(r.modeName, "index");
       } else if (cmd == SMARTAUDIO_RSP_GET_SETTINGS_V21) {
         ver = 21; strcpy(r.modeName, "dbm");
-      } else { continue; }
+      } else { Serial.printf("PROBE: unknown cmd 0x%02X\n", cmd); continue; }
+
+      Serial.printf("PROBE: SmartAudio v%d detected!\n", ver);
 
       // — SmartAudio detected —
       r.saVersion = ver;
