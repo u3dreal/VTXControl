@@ -1,7 +1,7 @@
 /*
  * ESP32HalfDuplex.cpp - ESP32 bit-banged half-duplex serial for VTXControl
  *
- * Copyright (C) 2024 u3dreal
+ * Copyright (C) 2024 u3dreal <info@q3de.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
