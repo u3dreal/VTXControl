@@ -136,4 +136,5 @@ Use this to characterize a new VTX before integrating.
 
 ## License
 
-`SoftwareSerialWithHalfDuplex` is LGPL 2.1. The remainder of VTXControl is GPL 3.0 — see LICENSE file.
+`ESP32HalfDuplex` and `SoftwareSerialWithHalfDuplex` are LGPL 2.1.
+The remainder of VTXControl is GPL 3.0 — see LICENSE file.
