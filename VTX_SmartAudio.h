@@ -1,9 +1,6 @@
 #ifndef VTX_SMARTAUDIO_H_
 #define VTX_SMARTAUDIO_H_
 
-#define SMARTAUDIO_IGNORE_CRC true //ignores crc calculation and verification
-//#define SMARTAUDIO_SKIP_STARTDUMMYBYTES_IN_RESPONSE true //special setting for Eachine TX5258 - we receive first two 0x00 bytes and additional byte 0x00 in the end
-#define SMARTAUDIO_WRITE_ZEROBYTES_AT_THE_END true //special setting for Eachine TX5258 (betaflight uses it for Smartaudio non-licensed clones) - we need to write additional zero byte at the end of command
 #define SMARTAUDIO_BUFFER_CAPACITY 5
 
 // SmartAudio Serial Protocol

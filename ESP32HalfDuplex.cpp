@@ -46,6 +46,11 @@ void ESP32HalfDuplex::begin(long speed) {
   _listening = true;
 }
 
+void ESP32HalfDuplex::setSpeed(long speed) {
+  _baud = speed;
+  _bitTime = (uint8_t)(1000000L / speed);
+}
+
 void ESP32HalfDuplex::begin(long speed, uint16_t configuration) {
   _baud = speed;
   _bitTime = (uint8_t)(1000000L / speed);

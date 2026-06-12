@@ -47,6 +47,7 @@ public:
 
   void begin(long speed);
   void begin(long speed, uint16_t configuration);
+  void setSpeed(long speed);
   bool listen();
   void end();
   bool isListening() { return _listening; }

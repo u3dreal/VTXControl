@@ -9,7 +9,8 @@
 #ifndef VTXControl_h
 #define VTXControl_h
 //--------------------------
-//#define VTXCDEBUG 1 //Uncomment this define to see the diagnostics
+// #define VTXCDEBUG 1 //Uncomment this define to see the diagnostics
+// #define ESP32HD_DEBUG 1
 //--------------------------
 #if VTXCDEBUG
 #define DEBUG(x) Serial.println(x)
@@ -32,6 +33,30 @@ enum VTXMode
 {
   SmartAudio = 1,
   Tramp = 2,
+};
+
+struct VtxProbeResult {
+  char protocol[16];
+  char modeName[8];
+  VTXMode mode;
+  int saVersion;
+
+  long baudRate;
+  uint16_t serialConfig;
+  uint16_t responseWaitMs;
+
+  uint16_t powersMw[8];
+  uint8_t powerCount;
+
+  bool trailingZero;
+  bool leadingZeroSkip;
+  bool powerInLowerNibble;
+  bool ignoreCRC;
+  bool strictReadback;
+  bool directFreq;
+  bool pitPowerZero;
+
+  int confidence;
 };
 enum VTXErrors
 {
@@ -76,7 +101,7 @@ public:
   bool setPowerInmW(uint16_t pwrmW);//sets power by value in mW
   bool setNextChannel();
   bool setPrevChannel();
-  bool updateParameters();  
+  bool updateParameters();
   int getPowerLevel() { return pwr_Level; }
   int getChannelIndex() { return ch_index; }
   bool getPitMode() { return pitMode; }
@@ -84,6 +109,29 @@ public:
   void clearErrors();
   VTXErrors getErrors();
   long getSpeed();
+
+  void applyProbeResult(const VtxProbeResult& result);
+
+  // Runtime flag getters/setters
+  void setTrailingZero(bool enable) { _trailingZero = enable; }
+  bool getTrailingZero() { return _trailingZero; }
+  void setLeadingZeroSkip(bool enable) { _leadingZeroSkip = enable; }
+  bool getLeadingZeroSkip() { return _leadingZeroSkip; }
+  void setPowerInLowerNibble(bool enable) { _powerInLowerNibble = enable; }
+  bool getPowerInLowerNibble() { return _powerInLowerNibble; }
+  void setIgnoreCRC(bool enable) { _ignoreCRC = enable; }
+  bool getIgnoreCRC() { return _ignoreCRC; }
+  void setStrictReadback(bool enable) { _strictReadback = enable; }
+  bool getStrictReadback() { return _strictReadback; }
+  void setDirectFreq(bool enable) { _directFreq = enable; }
+  bool getDirectFreq() { return _directFreq; }
+  void setPitPowerZero(bool enable) { _pitPowerZero = enable; }
+  bool getPitPowerZero() { return _pitPowerZero; }
+
+  static VtxProbeResult probe(
+    uint8_t pin,
+    const uint16_t* channelFreqs,
+    int channelFreqCount);
 #if VTXCDEBUG
   bool testSMAWrite();
   bool testSMAResponseFromSerial1();
@@ -106,7 +154,16 @@ private:
   int _responseTimeOut = 1000;//in ms
   int _numtries = 3;//num tries to send request and receive response, after that we try to change baud rate and try again
   bool _smartBaudRate = true;//tries to find apporpriated baud rate to communicate with VTX, if false- just work on fixed initial baudrate
-  
+
+  // Runtime behavioral flags (set by probe or applyProbeResult)
+  bool _trailingZero = false;
+  bool _leadingZeroSkip = true;
+  bool _powerInLowerNibble = true;
+  bool _ignoreCRC = true;
+  bool _strictReadback = true;
+  bool _directFreq = false;
+  bool _pitPowerZero = false;
+
   const uint16_t* _powers;//table of powers in mW
   int _power_size;
   const uint16_t* _freqs;//table of frequencies in MHz
@@ -121,7 +178,7 @@ private:
   uint16_t getPowerInmW(int pwrIndex);
     
   bool sa_updateSettings(); 
-  bool sa_ignoreCrc() const { return SMARTAUDIO_IGNORE_CRC; }  
+  bool sa_ignoreCrc() const { return _ignoreCRC; }  
   bool sa_parseResponseBuffer(const uint8_t* buffer);
   // command functions
   bool sa_setPitMode(bool enabled);
