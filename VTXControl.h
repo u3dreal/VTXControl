@@ -9,8 +9,8 @@
 #ifndef VTXControl_h
 #define VTXControl_h
 //--------------------------
-#define VTXCDEBUG 1 //Uncomment this define to see the diagnostics
-#define ESP32HD_DEBUG 1
+#define VTXCDEBUG 0 //Uncomment this define to see the diagnostics
+#define ESP32HD_DEBUG 0
 //--------------------------
 #if VTXCDEBUG
 #define DEBUG(x) Serial.println(x)
@@ -105,6 +105,8 @@ public:
   int getPowerLevel() { return pwr_Level; }
   int getChannelIndex() { return ch_index; }
   bool getPitMode() { return pitMode; }
+  uint16_t getFrequency() { return _frequency; }
+  uint16_t getPowerMw(int level); // returns mW for level (0-3), uses detected V2.1 table if available
   bool sa_readResponse();
   void clearErrors();
   VTXErrors getErrors();
@@ -150,6 +152,7 @@ private:
   int pwr_Level = -1;//default value -1 means not updated (not requested from VTX)
   int ch_index = -1;//default value -1 means not updated (not requested from VTX)
   bool pitMode = false;
+  uint16_t _frequency = 0;
   bool initialized = false;//tramp protocol needs to be initialized, so this var reflects state of Tramp initialization
   int _responseTimeOut = 1000;//in ms
   int _numtries = 3;//num tries to send request and receive response, after that we try to change baud rate and try again
@@ -168,6 +171,7 @@ private:
   int _power_size;
   const uint16_t* _freqs;//table of frequencies in MHz
   int _freqs_size;
+  uint16_t _detectedPowersMw[4]; // populated from V2.1 response L0-L3 dBm table
 
   //some utility functions  
   int getChannelIndex(uint16_t freq);

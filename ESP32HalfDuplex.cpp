@@ -201,6 +201,8 @@ int ESP32HalfDuplex::available() {
     } else {
       if (elapsed > 150000) break;
     }
+    // total timeout failsafe — line may be stuck low
+    if (micros() - startTime > 250000) break;
   }
   _receiving = false;
   uint8_t head = _rxHead;
@@ -226,10 +228,12 @@ void ESP32HalfDuplex::flush() {
   _overflow = false;
   // Drain pending bytes by waiting for idle line
   unsigned long t = millis();
+  unsigned long startTime = t;
   while (millis() - t < 10) {
     if (gpio_get_level((gpio_num_t)_txPin) == 0) {
       t = millis();
     }
+    if (millis() - startTime > 20) break;
   }
 }
 

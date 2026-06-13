@@ -15,7 +15,9 @@
 // uint16_t powers[5] = { 25, 200, 400, 800, 1600 };//in mW
 const uint16_t powers_v1[4] = {7 /*25mw*/, 16 /*200mw*/, 25 /*500mw*/, 40 /*800mw*/}; // for SmartAudio protocol v1
 // Smartaudio v2.1 protocol seems to be not documented (TBS documented just v1 and v2), but defined in ArduPilot
-const uint16_t powers_v21[4] = {14 /*25mw*/, 20 /*200mw*/, 26 /*500mw*/, 46 /*5w*/}; // for SmartAudio protocol v2.1 in dbm
+uint16_t powers_v21[4] = {14, 20, 26, 46}; // dBm: 25mW, 100mW, 400mW, 5W
+
+static uint16_t dbmToMw(uint8_t dbm); // forward declaration
 
 // Instantiates the VTX object with the specified parameters
 VTXControl::VTXControl(
@@ -43,6 +45,11 @@ VTXControl::VTXControl(
   _power_size = powers_len;
   _freqs = freqs;
   _freqs_size = freqs_len;
+
+  // Initialize detected power table from the original values
+  for (int i = 0; i < 4 && i < powers_len; i++) {
+    _detectedPowersMw[i] = powers[i];
+  }
 
   // with SmartAudio protocol according to TBS documentation
   //!!! Please do remember, for SmartAudio - logic level = 3.3V !!!
@@ -179,7 +186,7 @@ bool VTXControl::testSMAResponseFromSerial1()
 bool VTXControl::sa_setPitMode(bool enabled)
 {
   static uint8_t buf[6] = {0xAA, 0x55, SMARTAUDIO_CMD_SET_MODE, 1, 0x00, 0x00};
-  buf[4] = enabled ? 0x01 : 0x00;
+  buf[4] = enabled ? 0x01 : 0x00; // bit 0 = pit mode toggle (per Betaflight convention, confirmed working)
   buf[5] = sa_CRC8(buf, 5);
   port->writeDummyByte();
   bool res = port->write((uint8_t *)&buf, sizeof(buf)) == sizeof(buf);
@@ -274,6 +281,9 @@ bool VTXControl::sa_getSettings()
   if (_trailingZero) {
     port->write((uint8_t)0x00);
   }
+  // Don't flush here — flush waits for line idle, but the VTX may
+  // start responding immediately and those bytes would be missed.
+  // The scan loop in sa_readResponse handles any stale buffer data.
   port->listen();
   return res;
 }
@@ -299,128 +309,42 @@ void VTXControl::waitForInMs(unsigned int ms)
 }
 bool VTXControl::sa_readResponse()
 {
-  // On my Unify Pro32 the SmartAudio response is sent exactly 100ms after the request
-  // and the initial response is 40ms long so we should wait at least 140ms before giving up
-#if defined(ESP32)
-  // ESP32HalfDuplex::available() polls for up to 500ms; no blocking wait needed
-#else
-  waitForInMs(_responseTimeOut);
-#endif
+  // Don't flush here — flush waits for line idle, which can miss
+  // the VTX response bytes.  Stale buffer data from previous TX echo
+  // is harmless (the scan loop skips noise and looks for 0xAA 0x55).
+  uint8_t buf[AP_SMARTAUDIO_MAX_PACKET_SIZE];
+  int pos = 0, dataLen = 0, dataRead = 0;
+  int availCount = port->available();
 
-  int16_t incoming_bytes_count = port->available();
-  // check if it is a response in the wire
-  if (incoming_bytes_count < 0)
-  {
-    DEBUG("sa readResponse, return error on Avaialble");
-    return false;
-  }
-  else if (incoming_bytes_count == 0)
-  {
-    DEBUG("sa readResponse, incoming bytes=0, return false");
-    setError(VTXErrors::vtxIncomingBytesZero); //
-    return false;
-  }
-  // now we have no-zero length response, we can dump it
-#if VTXCDEBUG
-  port->dumpReceiveBuffer();
-#endif
-  // skip leading zero bytes if expected (Eachine TX5258 and similar clones)
-  uint8_t b = port->peek();
-  int skippedbytes = 0;
-  while (_leadingZeroSkip && b == 0x00)
-  {
-    port->read(); // skip 0x00 byte
-    skippedbytes++;
-    b = port->peek();
-  }
-  if (skippedbytes > 0)
-  {
-    incoming_bytes_count = port->available(); // refresh incoming_bytes_count
-    DEBUG("sa readResponse, skipped zero bytes =" + (String)skippedbytes);
-  }
-  const uint8_t response_header_size = sizeof(FrameHeader);
-  // wait until we have enough bytes to read a header
-  if (incoming_bytes_count < response_header_size)
-  {
-    DEBUG("sa readResponse, incoming_bytes_count < response_header_size: " + (String)incoming_bytes_count + ", return false");
-    setError(VTXErrors::vtxIncomingBytesLessHeaderSize);
-    return false;
-  }
-  DEBUG("sa readResponse, incoming_bytes_count = " + (String)incoming_bytes_count);
-  // allocate response buffer
-  uint8_t response_buffer[AP_SMARTAUDIO_MAX_PACKET_SIZE];
-  uint8_t buffer_length = 0;
-  // expected packet size
-  uint8_t packet_size = 0;
-  // now have at least the header, read it if necessary
-
-  // read the first non-zero byte
-  b = port->read();
-  // didn't see a sync byte, discard and go around again
-  if (b != SMARTAUDIO_SYNC_BYTE)
-  {
-    DEBUG("readResponse, b != SMARTAUDIO_SYNC_BYTE (b=" + (String)b + "), return false");
-    setError(VTXErrors::vtxIncomingByteNotEqualSyncByte);
-    return false;
-  }
-  response_buffer[buffer_length++] = b;
-  // read header byte
-  b = port->read();
-  // didn't see a header byte, discard and reset
-  if (b != SMARTAUDIO_HEADER_BYTE)
-  {
-    buffer_length = 0;
-    DEBUG("readResponse, b != SMARTAUDIO_HEADER_BYTE, return false");
-    setError(VTXErrors::vtxIncomingByteNotEqualHeaderByte);
-    return false;
-  }
-  response_buffer[buffer_length++] = b;
-  // read the rest of the header
-  for (; buffer_length < response_header_size; buffer_length++)
-  {
-    b = port->read();
-    response_buffer[buffer_length] = b;
-  }
-
-  FrameHeader *header = (FrameHeader *)response_buffer;
-  incoming_bytes_count -= response_header_size;
-
-  // implementations that ignore the CRC also appear to not account for it in the frame length
-  // if (sa_ignoreCrc())
-  //{
-  //  header->length++;
-  //}
-  packet_size = header->length;
-
-  // read the rest of the packet
-  // check for overflow
-  if (packet_size >= AP_SMARTAUDIO_MAX_PACKET_SIZE)
-  {
-    DEBUG("readResponse, rest packet size >= AP_SMARTAUDIO_MAX_PACKET_SIZE, return false");
-    setError(VTXErrors::vtxPacketSizeGreaterMaxPacketSize);
-    return false;
-  }
-  for (uint8_t i = 0; i < packet_size; i++)
-  {
+  while (availCount-- > 0) {
     uint8_t b = port->read();
-    response_buffer[buffer_length++] = b;
-  }
-
-    // didn't get the whole packet
-    if (buffer_length < packet_size + response_header_size)
-    {
-        DEBUG("readResponse, buffer_length < packet_size + response_header_size, return false");
-        setError(VTXErrors::vtxBufferLengthLessWholePacket);
-        return false;
+    if (b == SMARTAUDIO_SYNC_BYTE && port->peek() == SMARTAUDIO_HEADER_BYTE) {
+      buf[pos++] = b;
+      port->read(); // consume 0x55
+      buf[pos++] = SMARTAUDIO_HEADER_BYTE;
+      availCount--;
+      if (pos > 1) while (availCount > 0 && pos < (int)sizeof(buf) - 1) {
+        b = port->read();
+        availCount--;
+        buf[pos++] = b;
+        if (pos == 4) {
+          dataLen = buf[3];
+          if (dataLen >= (int)sizeof(buf) - 5) break;
+          dataRead = 0;
+        }
+        if (pos > 4 && ++dataRead > dataLen) {
+          bool correct = sa_parseResponseBuffer(buf);
+          port->flush();
+          waitForInMs(100);
+          DEBUG("readResponse end, correct_parse = " + (String)correct);
+          return correct;
+        }
+      }
     }
-
-    bool correct_parse = sa_parseResponseBuffer(response_buffer);
-  port->flush(); // clear the read buffer
-  // successful response, wait another 100ms to give the VTX a chance to recover
-  // before sending another command.
-  waitForInMs(100);
-  DEBUG("readResponse end, correct_parse = " + (String)correct_parse);
-  return correct_parse;
+  }
+  DEBUG("readResponse, timeout");
+  setError(VTXErrors::vtxIncomingBytesZero);
+  return false;
 }
 bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
 {
@@ -465,6 +389,7 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
     pwr_Level = getPowerIndexFromV1(resp->power);
     ch_index = resp->channel;
     pitMode = (resp->operationMode & 0x02) != 0; // TBS spec: Bit 1 = PitMode Running
+    _frequency = ((uint16_t)buffer[7] << 8) | buffer[8]; // big-endian
   }
   break;
   case SMARTAUDIO_RSP_GET_SETTINGS_V2:
@@ -487,11 +412,14 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
     }
 
     uint16_t freqMHz = (((uint16_t)buffer[7] << 8) | buffer[8]) & 0x3FFF;
+    _frequency = freqMHz;
 
+#if VTXCDEBUG
     Serial.printf("VTX: 0x%02X 0x%02X 0x%02X (Version/Command) 0x%02X (Length) 0x%02X (Channel) 0x%02X (Power Level) 0x%02X (Operation Mode) 0x%02X 0x%02X (Current Frequency %u) 0x%02X (CRC8)\n",
       buffer[0], buffer[1], buffer[2], buffer[3],
       buffer[4], buffer[5], buffer[6],
       buffer[7], buffer[8], freqMHz, buffer[9]);
+#endif
   }
   break;
 
@@ -504,8 +432,22 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
     //  sync hdr  cmd  len  CH   PW   MODE FREQ FREQ dBm  nLv  L0   L1   L2   L3   CRC
     //                       [4]  [5]  [6]  [7]  [8]  [9]  [10] [11] [12] [13] [14] [15]
     ch_index = buffer[4];
-    pwr_Level = getPowerIndexFromDbm(buffer[9]);
     pitMode = (buffer[6] & 0x02) != 0; // TBS spec: Bit 1 = PitMode Running
+
+    // Extract L0-L3 dBm table from VTX response (buffer[11..14])
+    for (int i = 0; i < 4 && (i + 11) < (int)headerPayloadLength; i++) {
+      uint8_t dBm = buffer[11 + i] & 0x7F; // strip MSB (flag bit)
+      powers_v21[i] = dBm;
+      _detectedPowersMw[i] = dbmToMw(dBm);
+    }
+    // Now compute pwr_Level using the updated powers_v21 table
+    pwr_Level = getPowerIndexFromDbm(buffer[9]);
+
+    uint16_t rawFreq = ((uint16_t)buffer[7] << 8) | buffer[8];
+    bool freqBit15 = (rawFreq >> 15) & 1;
+    bool freqBit14 = (rawFreq >> 14) & 1;
+    uint16_t freqMHz = rawFreq & 0x3FFF;
+    _frequency = freqMHz;
   }
   break;
   case SMARTAUDIO_RSP_SET_POWER:
@@ -542,8 +484,8 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
   case SMARTAUDIO_RSP_SET_FREQUENCY:
   {
     DEBUG("sa_parse_response_buffer(), SetFrequency");
-    const U16ResponseFrame *respu16 = (const U16ResponseFrame *)buffer;
-    uint16_t freq = respu16->payload & SMARTAUDIO_FREQUENCY_MASK;
+    uint16_t freq = ((uint16_t)buffer[4] << 8) | buffer[5]; // big-endian on wire
+    freq &= SMARTAUDIO_FREQUENCY_MASK;
     ch_index = getChannelIndex(freq);
   }
   break;
@@ -551,7 +493,7 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
   {
     DEBUG("sa_parse_response_buffer(), SetMode");
     const U8ResponseFrame *respu8 = (const U8ResponseFrame *)buffer;
-    pitMode = (respu8->payload & 0x04) != 0;
+    pitMode = (respu8->payload & 0x02) != 0; // bit 1 = pit mode (TBS V2/V2.1 spec)
   }
   break;
   }
@@ -695,6 +637,21 @@ uint16_t VTXControl::getPowerInmW(int pwrIndex)
   int pwrslen = _power_size;
   return (pwrIndex >= 0 && pwrIndex < pwrslen) ? _powers[pwrIndex] : 0;
 }
+uint16_t VTXControl::getPowerMw(int level)
+{
+  if (level < 0 || level >= 4) return 0;
+  // For V2.1, use the detected table from VTX response (L0-L3 dBm values)
+  if (sa_protocol_version == SMARTAUDIO_SPEC_PROTOCOL_v21) {
+    return _detectedPowersMw[level];
+  }
+  // Fallback to the original power table for V1/V2
+  return getPowerInmW(level);
+}
+// dBm → mW: 10^(dbm/10)
+static uint16_t dbmToMw(uint8_t dbm) {
+  float mw = powf(10.0f, dbm / 10.0f);
+  return (uint16_t)(mw + 0.5f);
+}
 int VTXControl::getPowerIndexFromMW(uint16_t pwrInmW)
 {
   int pwrslen = _power_size;
@@ -745,32 +702,20 @@ bool VTXControl::setFrequency(uint16_t freq)
 {
   clearErrors();
   bool res = false;
-  for (int i = 0; i < _numtries; i++) // trying to set _numtries times
+  for (int i = 0; i < _numtries; i++)
   {
     switch (vtx_mode)
     {
     case VTXMode::SmartAudio:
     {
-      int chIndex = getChannelIndex(freq);
-      if (chIndex != -1)
+      if (sa_setFrequency(freq))
       {
-        if (sa_setChannel(chIndex))
-        {
-          res = sa_readResponse();
-        }
-      }
-      else
-      {
-        if (sa_setFrequency(freq))
-        {
-          res = sa_readResponse();
-        }
+        res = sa_readResponse();
       }
     }
     break;
     case VTXMode::Tramp: // tramp protocol sets channel in Mhz
     {
-      // tramp protocol needs to be initialized
       if (!initialized)
       {
         trampInit();
@@ -781,14 +726,7 @@ bool VTXControl::setFrequency(uint16_t freq)
     break;
     }
     if (res)
-    {
-      uint16_t curr_freq = getChannelFrequency(ch_index);
-      if (curr_freq == freq)
-        return true;
-      // frequency was set directly (non-table freq via sa_setFrequency)
-      if (curr_freq == 0 && ch_index < 0)
-        return true;
-    }
+      return true;
   }
   return false;
 }
@@ -1160,8 +1098,8 @@ void VTXControl::applyProbeResult(const VtxProbeResult& result) {
   _directFreq = result.directFreq;
   _pitPowerZero = result.pitPowerZero;
 
-  if (result.baudRate > 0) {
-    port->setSpeed(result.baudRate);
+  if (result.baudRate > 0 && result.serialConfig > 0) {
+    port->begin(result.baudRate, result.serialConfig);
   }
 }
 
@@ -1177,13 +1115,17 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
   ESP32HalfDuplex p(pin, pin, false, false);
   const long bauds[] = {4800, 4860, 4920, 4980, 5040, 4560};
   const int numBauds = 6;
+  const uint16_t configs[] = {802, 801};
+  const int numConfigs = 2;
 
   // buffer for GET_SETTINGS command
   const uint8_t getSettingsCmd[] = {0xAA, 0x55, SMARTAUDIO_CMD_GET_SETTINGS, 0x00, 0x9F};
 
   for (int bi = 0; bi < numBauds; bi++) {
+    for (int ci = 0; ci < numConfigs; ci++) {
     for (int tz = 0; tz <= 1; tz++) {
-      p.begin(bauds[bi], AP_SMARTAUDIO_UART_CFG);
+      Serial.printf("PROBE: trying baud=%ld cfg=%d tz=%d\n", bauds[bi], configs[ci], tz);
+      p.begin(bauds[bi], configs[ci]);
       delay(150);
       p.flush();
 
@@ -1193,34 +1135,48 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
       if (tz) p.write((uint8_t)0x00);
       p.listen();
 
-      avail = p.available();
-      Serial.printf("PROBE: baud=%ld tz=%d avail=%d\n", bauds[bi], tz, avail);
-      if (avail < 4) { Serial.println("PROBE: avail<4, skip"); continue; }
+      // accumulate response and scan for sync
+      int availCount = p.available();
+      int totalBytes = availCount;
 
-      // detect leading zeros
-      int leadZeros = 0;
-      while (p.peek() == 0x00) { p.read(); leadZeros++; }
-      if (leadZeros > 0) {
-        avail = p.available();
-        if (avail < 4) continue;
-      }
-
-      uint8_t sync = p.read();
-      if (sync != SMARTAUDIO_SYNC_BYTE) { Serial.printf("PROBE: sync=0x%02X != 0xAA\n", sync); continue; }
-      uint8_t hdr = p.read();
-      if (hdr != SMARTAUDIO_HEADER_BYTE) { Serial.printf("PROBE: hdr=0x%02X != 0x55\n", hdr); continue; }
-
-      uint8_t cmd = p.read();
-      uint8_t len = p.read();
-      if (len >= AP_SMARTAUDIO_MAX_PACKET_SIZE) { Serial.printf("PROBE: len=%d too big\n", len); continue; }
-      Serial.printf("PROBE: sync=0x%02X hdr=0x%02X cmd=0x%02X len=%d\n", sync, hdr, cmd, len);
-
-      // read payload + CRC
+      // scan through buffer for 0xAA 0x55 sync
+      uint8_t cmd = 0, len = 0;
       uint8_t payload[AP_SMARTAUDIO_MAX_PACKET_SIZE];
-      uint8_t plen = 0;
-      for (; plen < len + 1 && plen < AP_SMARTAUDIO_MAX_PACKET_SIZE - 4; plen++) {
-        payload[plen] = p.read();
+      uint8_t dataRead = 0;
+      int leadZeros = 0;
+      bool gotFrame = false;
+
+      while (availCount-- > 0) {
+        uint8_t b = p.read();
+        if (b == 0x00) { leadZeros++; continue; }
+        if (b == SMARTAUDIO_SYNC_BYTE && p.peek() == SMARTAUDIO_HEADER_BYTE) {
+          // found sync — consume header and read frame
+          availCount--; p.read(); // discard 0x55
+          cmd = p.read(); availCount--;
+          len = p.read(); availCount--;
+          if (len >= AP_SMARTAUDIO_MAX_PACKET_SIZE) break;
+          for (dataRead = 0; dataRead < len + 1 && dataRead < AP_SMARTAUDIO_MAX_PACKET_SIZE - 4; dataRead++) {
+            payload[dataRead] = p.read(); availCount--;
+          }
+          gotFrame = true;
+          break;
+        }
       }
+      p.flush();
+
+      if (!gotFrame) {
+        Serial.printf("PROBE: no frame at baud=%ld cfg=%d tz=%d (%d bytes)", bauds[bi], configs[ci], tz, totalBytes);
+        if (p.available() > 0) {
+          Serial.print(" [");
+          for (int i = 0; i < 16 && p.available() > 0; i++) {
+            Serial.printf(" %02X", p.read());
+          }
+          Serial.print(" ]");
+        }
+        Serial.println();
+        continue;
+      }
+      Serial.printf("PROBE: cmd=0x%02X len=%d leadZeros=%d\n", cmd, len, leadZeros);
 
       // determine version from command byte
       int ver = 0;
@@ -1237,6 +1193,7 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
       // — SmartAudio detected —
       r.saVersion = ver;
       r.baudRate = bauds[bi];
+      r.serialConfig = configs[ci];
       r.trailingZero = (tz == 1);
       r.leadingZeroSkip = (leadZeros > 0);
       r.ignoreCRC = true;            // most clones need CRC off
@@ -1249,9 +1206,12 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
         for (int i = 0; i < 4 && i < 8; i++) r.powersMw[i] = v1mw[i];
         r.powerCount = 4;
       } else if (ver == 21) {
-        static const uint16_t v21mw[] = {25, 200, 500, 5000};
-        for (int i = 0; i < 4 && i < 8; i++) r.powersMw[i] = v21mw[i];
         r.powerCount = 4;
+        // Extract L0-L3 dBm from GET_SETTINGS payload[7..10] and convert to mW
+        for (int i = 0; i < r.powerCount && (i + 7) < len; i++) {
+          uint8_t dbm = payload[7 + i] & 0x7F;
+          r.powersMw[i] = dbmToMw(dbm);
+        }
       } else {
         // v2 — power mW depends on VTX; use generic 4-level table
         static const uint16_t v2mw[] = {25, 200, 400, 800};
@@ -1260,9 +1220,15 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
       }
       r.confidence = 60;
 
-      // — probe power encoding via SET_POWER(0) —
+      // — probe power encoding via SET_POWER(level0) —
       uint8_t setPowerCmd[6] = {0xAA, 0x55, SMARTAUDIO_CMD_SET_POWER, 1, 0, 0};
-      setPowerCmd[4] = 0;           // level 0
+      if (ver == 1) {
+        setPowerCmd[4] = powers_v1[0];  // V1: 7 for 25mW
+      } else if (ver == 21) {
+        setPowerCmd[4] = 0x80 | 14;     // V2.1: dBm=14 (25mW) with MSB set
+      } else {
+        setPowerCmd[4] = 0;             // V2: direct index 0
+      }
       setPowerCmd[5] = sa_CRC8(setPowerCmd, 5);
 
       p.writeDummyByte();
@@ -1276,12 +1242,14 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
       // skip leading zeros
       while (r.leadingZeroSkip && p.peek() == 0x00) p.read();
 
-      sync = p.read();
-      if (sync != SMARTAUDIO_SYNC_BYTE) { r.confidence = 50; p.flush(); return r; }
-      hdr = p.read();
-      if (hdr != SMARTAUDIO_HEADER_BYTE) { r.confidence = 50; p.flush(); return r; }
+      {
+      uint8_t sbyte = p.read();
+      if (sbyte != SMARTAUDIO_SYNC_BYTE) { r.confidence = 50; p.flush(); return r; }
+      uint8_t hbyte = p.read();
+      if (hbyte != SMARTAUDIO_HEADER_BYTE) { r.confidence = 50; p.flush(); return r; }
       cmd = p.read();
       if (cmd != SMARTAUDIO_RSP_SET_POWER) { r.confidence = 50; p.flush(); return r; }
+      }
 
       // read SET_POWER payload (2 bytes U16 + CRC)
       uint8_t pl[3] = {(uint8_t)p.read(), (uint8_t)p.read(), (uint8_t)p.read()};
@@ -1323,6 +1291,7 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
 
       p.flush();
       return r;
+    }
     }
   }
 
