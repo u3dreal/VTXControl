@@ -464,27 +464,34 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
     const SettingsResponseFrame *resp = (const SettingsResponseFrame *)buffer;
     pwr_Level = getPowerIndexFromV1(resp->power);
     ch_index = resp->channel;
-    pitMode = (resp->operationMode & 0x04) != 0;
+    pitMode = (resp->operationMode & 0x02) != 0; // TBS spec: Bit 1 = PitMode Running
   }
   break;
   case SMARTAUDIO_RSP_GET_SETTINGS_V2:
   {
     DEBUG("sa_parse_response_buffer(), Protocol version 2");
     sa_protocol_version = SMARTAUDIO_SPEC_PROTOCOL_v2;
-    // Standard: AA 55 09 05 [VER] [CH] [PW] [MODE] [FREQ_L] [FREQ_H] [CRC]
-    // TX805S:   AA 55 09 06 [CH] [??] [PW] [??] [??] [??] [CRC]
-    // _powerInLowerNibble discriminates byte layout:
-    //   true  → buffer[4] = global channel, buffer[6] = raw power
-    //   false → buffer[5] = global channel, buffer[6] = raw power (standard)
-    if (_powerInLowerNibble)
+    // TBS SmartAudio V2 response layout:
+    //   0    1    2    3    4    5    6    7    8    9
+    //  sync hdr  cmd  len  CH   PW   MODE FREQ FREQ CRC
+    //
+    // TX805S clone: power in lower nibble of buffer[5]
+    if (_powerInLowerNibble) {
       ch_index = buffer[4];
-    else
-      ch_index = buffer[5];
-    pwr_Level = buffer[6];
-    pitMode = (buffer[7] & 0x04) != 0;
-    Serial.print("V2 RAW:");
-    for (int _i = 0; _i < 11; _i++) { Serial.print(' '); Serial.print(buffer[_i], HEX); }
-    Serial.println();
+      pwr_Level = buffer[5] & 0x0F;
+      pitMode = (buffer[6] & 0x02) != 0;
+    } else {
+      ch_index = buffer[4];
+      pwr_Level = buffer[5];
+      pitMode = (buffer[6] & 0x02) != 0;
+    }
+
+    uint16_t freqMHz = (((uint16_t)buffer[7] << 8) | buffer[8]) & 0x3FFF;
+
+    Serial.printf("VTX: 0x%02X 0x%02X 0x%02X (Version/Command) 0x%02X (Length) 0x%02X (Channel) 0x%02X (Power Level) 0x%02X (Operation Mode) 0x%02X 0x%02X (Current Frequency %u) 0x%02X (CRC8)\n",
+      buffer[0], buffer[1], buffer[2], buffer[3],
+      buffer[4], buffer[5], buffer[6],
+      buffer[7], buffer[8], freqMHz, buffer[9]);
   }
   break;
 
@@ -492,10 +499,13 @@ bool VTXControl::sa_parseResponseBuffer(const uint8_t *buffer)
   {
     DEBUG("sa_parse_response_buffer(), Protocol version 2.1");
     sa_protocol_version = SMARTAUDIO_SPEC_PROTOCOL_v21;
-    // Response: AA 55 11 xx [VER] [CH] [PW] [MODE] [FREQ_H] [FREQ_L] [PWR_DBM] [NUM_LVLS] [LVL0-7] [CRC]
-    ch_index = buffer[5];
-    pwr_Level = getPowerIndexFromDbm(buffer[10]);
-    pitMode = (buffer[7] & 0x04) != 0;
+    // TBS SmartAudio V2.1 response layout:
+    //   0    1    2    3    4    5    6    7    8    9    10   11   12   13   14   15
+    //  sync hdr  cmd  len  CH   PW   MODE FREQ FREQ dBm  nLv  L0   L1   L2   L3   CRC
+    //                       [4]  [5]  [6]  [7]  [8]  [9]  [10] [11] [12] [13] [14] [15]
+    ch_index = buffer[4];
+    pwr_Level = getPowerIndexFromDbm(buffer[9]);
+    pitMode = (buffer[6] & 0x02) != 0; // TBS spec: Bit 1 = PitMode Running
   }
   break;
   case SMARTAUDIO_RSP_SET_POWER:
