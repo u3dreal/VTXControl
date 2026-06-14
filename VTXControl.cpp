@@ -1145,9 +1145,12 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
       uint8_t dataRead = 0;
       int leadZeros = 0;
       bool gotFrame = false;
+      uint8_t rawDump[64];
+      int rawDumpLen = 0;
 
       while (availCount-- > 0) {
         uint8_t b = p.read();
+        if (rawDumpLen < 64) rawDump[rawDumpLen++] = b;
         if (b == 0x00) { leadZeros++; continue; }
         if (b == SMARTAUDIO_SYNC_BYTE && p.peek() == SMARTAUDIO_HEADER_BYTE) {
           // found sync — consume header and read frame
@@ -1165,12 +1168,11 @@ VtxProbeResult VTXControl::probe(uint8_t pin,
       p.flush();
 
       if (!gotFrame) {
-        Serial.printf("PROBE: no frame at baud=%ld cfg=%d tz=%d (%d bytes)", bauds[bi], configs[ci], tz, totalBytes);
-        if (p.available() > 0) {
+        Serial.printf("PROBE: no frame at baud=%ld cfg=%d tz=%d (%d bytes raw=%d)", bauds[bi], configs[ci], tz, totalBytes, rawDumpLen);
+        if (rawDumpLen > 0) {
           Serial.print(" [");
-          for (int i = 0; i < 16 && p.available() > 0; i++) {
-            Serial.printf(" %02X", p.read());
-          }
+          int n = rawDumpLen < 40 ? rawDumpLen : 40;
+          for (int i = 0; i < n; i++) Serial.printf(" %02X", rawDump[i]);
           Serial.print(" ]");
         }
         Serial.println();
