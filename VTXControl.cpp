@@ -309,40 +309,38 @@ void VTXControl::waitForInMs(unsigned int ms)
 }
 bool VTXControl::sa_readResponse()
 {
-  // Don't flush here — flush waits for line idle, which can miss
-  // the VTX response bytes.  Stale buffer data from previous TX echo
-  // is harmless (the scan loop skips noise and looks for 0xAA 0x55).
-  uint8_t buf[AP_SMARTAUDIO_MAX_PACKET_SIZE];
-  int pos = 0, dataLen = 0, dataRead = 0;
-  int availCount = port->available();
+  for (int retry = 0; retry < 2; retry++) {
+    uint8_t buf[AP_SMARTAUDIO_MAX_PACKET_SIZE];
+    int pos = 0, dataLen = 0, dataRead = 0;
+    int availCount = port->available();
 
-  while (availCount-- > 0) {
-    uint8_t b = port->read();
-    if (b == SMARTAUDIO_SYNC_BYTE && port->peek() == SMARTAUDIO_HEADER_BYTE) {
-      buf[pos++] = b;
-      port->read(); // consume 0x55
-      buf[pos++] = SMARTAUDIO_HEADER_BYTE;
-      availCount--;
-      if (pos > 1) while (availCount > 0 && pos < (int)sizeof(buf) - 1) {
-        b = port->read();
-        availCount--;
+    while (availCount-- > 0) {
+      uint8_t b = port->read();
+      if (b == SMARTAUDIO_SYNC_BYTE && port->peek() == SMARTAUDIO_HEADER_BYTE) {
         buf[pos++] = b;
-        if (pos == 4) {
-          dataLen = buf[3];
-          if (dataLen >= (int)sizeof(buf) - 5) break;
-          dataRead = 0;
-        }
-        if (pos > 4 && ++dataRead > dataLen) {
-          bool correct = sa_parseResponseBuffer(buf);
-          port->flush();
-          waitForInMs(100);
-          DEBUG("readResponse end, correct_parse = " + (String)correct);
-          return correct;
+        port->read(); // consume 0x55
+        buf[pos++] = SMARTAUDIO_HEADER_BYTE;
+        availCount--;
+        if (pos > 1) while (availCount > 0 && pos < (int)sizeof(buf) - 1) {
+          b = port->read();
+          availCount--;
+          buf[pos++] = b;
+          if (pos == 4) {
+            dataLen = buf[3];
+            if (dataLen >= (int)sizeof(buf) - 5) break;
+            dataRead = 0;
+          }
+          if (pos > 4 && ++dataRead >= dataLen) {
+            bool correct = sa_parseResponseBuffer(buf);
+            port->flush();
+            waitForInMs(100);
+            return correct;
+          }
         }
       }
     }
+    if (retry == 0) delay(20);
   }
-  DEBUG("readResponse, timeout");
   setError(VTXErrors::vtxIncomingBytesZero);
   return false;
 }
@@ -763,9 +761,7 @@ bool VTXControl::setChannel(int chIndex)
       }
       break;
       }
-      // if channel set succesfully - check the updated info from VTX
-      if (res && chIndex == ch_index)
-        return true;
+      if (res) return true;
     }
   }
   return false;
